@@ -26,7 +26,7 @@
 ## Tech Stack
 
 ### Backend
-- **Java 17** + **Spring Boot 3.x** - Core order service
+- **Java 11** + **Spring Boot 2.7.18** - Core order service
 - **Spring Data JPA** + **Hibernate** - ORM layer
 - **PostgreSQL** - Primary database
 - **Python** - Analytics microservice
@@ -49,8 +49,8 @@
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Java 17+
-- Node.js 16+
+- Java 11
+- Node.js x+
 - Docker & Docker Compose
 - Python 3.9+
 - Maven 3.8+

@@ -2,18 +2,18 @@
 
 A comprehensive enterprise-grade system for order management with real-time analytics, built using modern microservices architecture.
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Frontend      │    │   Order Service │    │  Analytics      │
-│   (React)       │◄──►│   (Spring Boot) │◄──►│  (Flink/Spark)  │
+│   Frontend      │    │   Order Service │    │       Kafka     │
+│   (React)       │◄──►│   (Spring Boot) │◄──►│  (Event Stream) │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                                 │                        │
                                 ▼                        ▼
                        ┌─────────────────┐    ┌─────────────────┐
-                       │   PostgreSQL    │    │     Kafka       │
-                       │   (Orders DB)   │    │  (Event Stream) │
+                       │   PostgreSQL    │    │    Analytics    │
+                       │   (Orders DB)   │    │ (Flink / Spark) │
                        └─────────────────┘    └─────────────────┘
                                                         │
                                                         ▼
@@ -23,7 +23,7 @@ A comprehensive enterprise-grade system for order management with real-time anal
                                               └─────────────────┘
 ```
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### Backend
 - **Java 17** + **Spring Boot 3.x** - Core order service
@@ -61,7 +61,7 @@ A comprehensive enterprise-grade system for order management with real-time anal
 3. Build and run services: `./scripts/start-all.sh`
 4. Access dashboard: http://localhost:3000
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 order-processing-system/
@@ -74,7 +74,7 @@ order-processing-system/
 └── docs/                  # Documentation
 ```
 
-## 🎯 Features
+##  Features
 
 ### Order Management
 - Create, read, update orders
@@ -94,7 +94,7 @@ order-processing-system/
 - System monitoring
 - User management
 
-## 🧪 Testing
+## Testing
 
 Run all tests:
 ```bash
@@ -113,17 +113,9 @@ pytest analytics-service/
 mvn verify -f order-service/pom.xml
 ```
 
-## 📊 Monitoring
+## Monitoring
 
 - Application metrics via Micrometer
 - Kafka monitoring via Kafka Manager
 - Database monitoring via pgAdmin
 - Custom dashboards in React frontend
-
-## 🔧 Development
-
-See individual service README files for detailed development instructions:
-- [Order Service](order-service/README.md)
-- [Analytics Service](analytics-service/README.md)
-- [Stream Processor](stream-processor/README.md)
-- [Frontend](frontend/README.md)

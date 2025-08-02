@@ -1,6 +1,6 @@
 # Real-Time Order Processing and Analytics System
 
-A comprehensive enterprise-grade system for order management with real-time analytics, built using modern microservices architecture.
+(Eventual Goal) A comprehensive enterprise-grade system for order management with real-time analytics, built using modern microservices architecture.
 
 ## Architecture Overview
 

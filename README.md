@@ -5,22 +5,22 @@ A comprehensive enterprise-grade system for order management with real-time anal
 ## Architecture Overview
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Frontend      │    │   Order Service │    │  Analytics      │
-│   (React)       │◄──►│   (Spring Boot) │◄──►│  (Flink/Spark)  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │                        │
-                                ▼                        ▼
-                       ┌─────────────────┐    ┌─────────────────┐
-                       │   PostgreSQL    │    │     Kafka       │
-                       │   (Orders DB)   │    │  (Event Stream) │
-                       └─────────────────┘    └─────────────────┘
-                                                        │
-                                                        ▼
-                                              ┌─────────────────┐
-                                              │   Cassandra     │
-                                              │ (Analytics DB)  │
-                                              └─────────────────┘
+┌─────────────────┐    ┌─────────────────┐    ┌────────────────────┐
+│   Frontend      │    │   Order Service │    │  Analytics Service │
+│   (React)       │◄──►│   (Spring Boot) │◄──►│  (Python + Redis)  │
+└─────────────────┘    └─────────────────┘    └────────────────────┘
+                               │                        │
+                               ▼                        ▼
+                      ┌─────────────────┐    ┌─────────────────┐
+                      │   PostgreSQL    │    │     Kafka       │
+                      │   (Orders DB)   │    │  (Event Stream) │
+                      └─────────────────┘    └─────────────────┘
+                                                       │
+                                                       ▼
+                                             ┌─────────────────┐
+                                             │   Cassandra     │
+                                             │ (Analytics DB)  │
+                                             └─────────────────┘
 ```
 
 ## Tech Stack

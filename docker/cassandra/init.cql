@@ -1,3 +1,6 @@
+-- Cassandra initialization script for analytics
+-- This script will be executed when Cassandra starts
+
 -- Create keyspace for analytics
 CREATE KEYSPACE IF NOT EXISTS analytics
 WITH REPLICATION = {
@@ -5,41 +8,59 @@ WITH REPLICATION = {
     'replication_factor': 1
 };
 
+-- Use the analytics keyspace
 USE analytics;
 
--- Order events table for real-time processing
+-- Create tables for analytics data
 CREATE TABLE IF NOT EXISTS order_events (
     event_id UUID PRIMARY KEY,
-    order_id UUID,
     event_type TEXT,
-    event_data TEXT,
+    order_id TEXT,
+    user_id TEXT,
     timestamp TIMESTAMP,
-    user_id UUID
+    data TEXT
 );
 
--- Aggregated metrics table
-CREATE TABLE IF NOT EXISTS order_metrics (
-    metric_date DATE,
-    metric_hour INT,
-    metric_type TEXT,
-    metric_value DOUBLE,
-    PRIMARY KEY (metric_date, metric_hour, metric_type)
+CREATE TABLE IF NOT EXISTS order_metrics_hourly (
+    date_hour TEXT PRIMARY KEY,
+    order_count INT,
+    total_revenue DECIMAL,
+    avg_order_value DECIMAL,
+    updated_at TIMESTAMP
 );
 
--- Product performance table
 CREATE TABLE IF NOT EXISTS product_metrics (
-    product_id UUID,
-    metric_date DATE,
-    total_orders COUNTER,
-    total_revenue DOUBLE,
-    PRIMARY KEY (product_id, metric_date)
+    product_id TEXT PRIMARY KEY,
+    product_name TEXT,
+    total_quantity_sold INT,
+    total_revenue DECIMAL,
+    order_count INT,
+    updated_at TIMESTAMP
 );
 
--- User activity table
-CREATE TABLE IF NOT EXISTS user_activity (
-    user_id UUID,
-    activity_date DATE,
-    order_count COUNTER,
-    total_spent DOUBLE,
-    PRIMARY KEY (user_id, activity_date)
+CREATE TABLE IF NOT EXISTS user_metrics (
+    user_id TEXT PRIMARY KEY,
+    total_orders INT,
+    total_spent DECIMAL,
+    avg_order_value DECIMAL,
+    last_order_date TIMESTAMP,
+    updated_at TIMESTAMP
 );
+
+-- Create additional tables for real-time analytics
+CREATE TABLE IF NOT EXISTS daily_stats (
+    date TEXT PRIMARY KEY,
+    total_orders INT,
+    total_revenue DECIMAL,
+    unique_customers INT,
+    avg_order_value DECIMAL,
+    updated_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS product_sales_hourly (
+    product_id TEXT,
+    hour_bucket TEXT,
+    quantity_sold INT,
+    revenue DECIMAL,
+    PRIMARY KEY (product_id, hour_bucket)
+) WITH CLUSTERING ORDER BY (hour_bucket DESC);

@@ -180,7 +180,7 @@ cd analytics-service && source .venv/bin/activate && pytest
 - Check Docker containers: `docker ps`
 - View Kafka topics: `docker exec -it kafka kafka-topics --list --bootstrap-server localhost:9092`
 
-## 📊 Monitoring
+## Monitoring
 
 - Application metrics via Micrometer
 - Kafka monitoring via Kafka Manager

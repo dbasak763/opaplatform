@@ -2,7 +2,7 @@
 
 A comprehensive enterprise-grade system for order management with real-time analytics, built using modern microservices architecture.
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -23,7 +23,7 @@ A comprehensive enterprise-grade system for order management with real-time anal
                                               └─────────────────┘
 ```
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### Backend
 - **Java 17** + **Spring Boot 3.x** - Core order service
@@ -46,7 +46,7 @@ A comprehensive enterprise-grade system for order management with real-time anal
 - **TestContainers** - Integration testing
 - **PyTest** - Python testing
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Java 17+
@@ -115,7 +115,7 @@ The React development server runs on [http://localhost:3000](http://localhost:30
 
 Sample data loaded at startup includes users, products, and orders to simplify manual testing.
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 order-processing-system/
@@ -128,7 +128,7 @@ order-processing-system/
 └── docs/                  # Documentation
 ```
 
-## 🎯 Features
+## Features
 
 ### Order Management
 - Create, read, update orders
@@ -148,7 +148,7 @@ order-processing-system/
 - System monitoring
 - User management
 
-## 🧪 Testing & QA
+## Testing & QA
 
 ### Automated Test Suites
 ```bash
@@ -187,7 +187,7 @@ cd analytics-service && source .venv/bin/activate && pytest
 - Database monitoring via pgAdmin
 - Custom dashboards in React frontend
 
-## 🔧 Development
+## Development
 
 See individual service README files for detailed development instructions:
 - [Order Service](order-service/README.md)

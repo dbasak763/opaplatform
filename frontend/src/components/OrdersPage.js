@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -42,11 +42,7 @@ const OrdersPage = () => {
     'CANCELLED'
   ];
 
-  useEffect(() => {
-    loadOrders();
-  }, [page, rowsPerPage]);
-
-  const loadOrders = async () => {
+  const loadOrders = useCallback(async () => {
     try {
       setLoading(true);
       const response = await orderService.getOrders(page, rowsPerPage);
@@ -57,7 +53,11 @@ const OrdersPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, rowsPerPage]);
+
+  useEffect(() => {
+    loadOrders();
+  }, [loadOrders]);
 
   const handleChangePage = (event, newPage) => {
     setPage(newPage);
@@ -156,8 +156,8 @@ const OrdersPage = () => {
             <TableBody>
               {orders.map((order) => (
                 <TableRow key={order.id}>
-                  <TableCell>#{order.id}</TableCell>
-                  <TableCell>{order.user?.name || 'N/A'}</TableCell>
+                  <TableCell>{order.orderNumber}</TableCell>
+                  <TableCell>{order.userFullName || 'N/A'}</TableCell>
                   <TableCell>{formatCurrency(order.totalAmount)}</TableCell>
                   <TableCell>
                     <Chip 
@@ -216,10 +216,10 @@ const OrdersPage = () => {
           {selectedOrder && (
             <Box>
               <Typography variant="h6" gutterBottom>
-                Order #{selectedOrder.id}
+                Order {selectedOrder.orderNumber}
               </Typography>
-              <Typography><strong>Customer:</strong> {selectedOrder.user?.name}</Typography>
-              <Typography><strong>Email:</strong> {selectedOrder.user?.email}</Typography>
+              <Typography><strong>Customer:</strong> {selectedOrder.userFullName}</Typography>
+              <Typography><strong>Email:</strong> {selectedOrder.userEmail}</Typography>
               <Typography><strong>Status:</strong> {selectedOrder.status}</Typography>
               <Typography><strong>Total Amount:</strong> {formatCurrency(selectedOrder.totalAmount)}</Typography>
               <Typography><strong>Created:</strong> {formatDate(selectedOrder.createdAt)}</Typography>
@@ -238,12 +238,12 @@ const OrdersPage = () => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {selectedOrder.orderItems?.map((item, index) => (
-                      <TableRow key={index}>
-                        <TableCell>{item.product?.name}</TableCell>
+                    {selectedOrder.items?.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell>{item.productName}</TableCell>
                         <TableCell>{item.quantity}</TableCell>
-                        <TableCell>{formatCurrency(item.price)}</TableCell>
-                        <TableCell>{formatCurrency(item.quantity * item.price)}</TableCell>
+                        <TableCell>{formatCurrency(item.unitPrice)}</TableCell>
+                        <TableCell>{formatCurrency(item.totalPrice)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

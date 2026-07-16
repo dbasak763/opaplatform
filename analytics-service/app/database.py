@@ -1,129 +1,105 @@
-import redis
-from cassandra.cluster import Cluster
-from cassandra.auth import PlainTextAuthProvider
 import logging
+import os
 from typing import Optional
 
+import redis
+from cassandra.cluster import Cluster
+
 logger = logging.getLogger(__name__)
+
 
 class DatabaseConnections:
     def __init__(self):
         self.redis_client: Optional[redis.Redis] = None
         self.cassandra_session = None
         self.cassandra_cluster = None
-        
-    def connect_redis(self, host: str = "localhost", port: int = 6379, db: int = 0):
-        """Connect to Redis"""
+
+    def connect_redis(self):
+        host = os.getenv("REDIS_HOST", "localhost")
+        port = int(os.getenv("REDIS_PORT", "6379"))
+        db = int(os.getenv("REDIS_DB", "0"))
         try:
-            self.redis_client = redis.Redis(
+            client = redis.Redis(
                 host=host,
                 port=port,
                 db=db,
                 decode_responses=True,
                 socket_connect_timeout=5,
-                socket_timeout=5
+                socket_timeout=5,
             )
-            # Test connection
-            self.redis_client.ping()
-            logger.info("Connected to Redis successfully")
-            return self.redis_client
-        except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
+            client.ping()
+            self.redis_client = client
+            logger.info("Connected to Redis at %s:%s", host, port)
+            return client
+        except Exception as exc:
+            logger.warning("Redis connection failed: %s", exc)
+            self.redis_client = None
             return None
-            
-    def connect_cassandra(self, hosts: list = None, keyspace: str = "analytics"):
-        """Connect to Cassandra"""
-        if hosts is None:
-            hosts = ["localhost"]
-            
+
+    def connect_cassandra(self):
+        hosts = [host.strip() for host in os.getenv("CASSANDRA_HOSTS", "localhost").split(",") if host.strip()]
+        port = int(os.getenv("CASSANDRA_PORT", "9042"))
+        keyspace = os.getenv("CASSANDRA_KEYSPACE", "analytics")
         try:
-            # Create cluster connection
-            self.cassandra_cluster = Cluster(hosts)
-            self.cassandra_session = self.cassandra_cluster.connect()
-            
-            # Create keyspace if it doesn't exist
-            self.cassandra_session.execute(f"""
+            cluster = Cluster(hosts, port=port)
+            session = cluster.connect()
+            session.execute(
+                f"""
                 CREATE KEYSPACE IF NOT EXISTS {keyspace}
-                WITH REPLICATION = {{
-                    'class': 'SimpleStrategy',
-                    'replication_factor': 1
-                }}
-            """)
-            
-            # Use the keyspace
-            self.cassandra_session.set_keyspace(keyspace)
-            
-            # Create tables
+                WITH REPLICATION = {{'class': 'SimpleStrategy', 'replication_factor': 1}}
+                """
+            )
+            session.set_keyspace(keyspace)
+            self.cassandra_cluster = cluster
+            self.cassandra_session = session
             self._create_cassandra_tables()
-            
-            logger.info(f"Connected to Cassandra keyspace: {keyspace}")
-            return self.cassandra_session
-            
-        except Exception as e:
-            logger.error(f"Failed to connect to Cassandra: {e}")
+            logger.info("Connected to Cassandra keyspace %s", keyspace)
+            return session
+        except Exception as exc:
+            logger.warning("Cassandra connection failed: %s", exc)
+            if self.cassandra_cluster:
+                self.cassandra_cluster.shutdown()
+            self.cassandra_cluster = None
+            self.cassandra_session = None
             return None
-            
+
     def _create_cassandra_tables(self):
-        """Create necessary Cassandra tables"""
-        try:
-            # Order events table
-            self.cassandra_session.execute("""
-                CREATE TABLE IF NOT EXISTS order_events (
-                    event_id UUID PRIMARY KEY,
-                    event_type TEXT,
-                    order_id TEXT,
-                    user_id TEXT,
-                    timestamp TIMESTAMP,
-                    data TEXT
-                )
-            """)
-            
-            # Order metrics by hour
-            self.cassandra_session.execute("""
-                CREATE TABLE IF NOT EXISTS order_metrics_hourly (
-                    date_hour TEXT PRIMARY KEY,
-                    order_count INT,
-                    total_revenue DECIMAL,
-                    avg_order_value DECIMAL,
-                    updated_at TIMESTAMP
-                )
-            """)
-            
-            # Product metrics
-            self.cassandra_session.execute("""
-                CREATE TABLE IF NOT EXISTS product_metrics (
-                    product_id TEXT PRIMARY KEY,
-                    product_name TEXT,
-                    total_quantity_sold INT,
-                    total_revenue DECIMAL,
-                    order_count INT,
-                    updated_at TIMESTAMP
-                )
-            """)
-            
-            # User metrics
-            self.cassandra_session.execute("""
-                CREATE TABLE IF NOT EXISTS user_metrics (
-                    user_id TEXT PRIMARY KEY,
-                    total_orders INT,
-                    total_spent DECIMAL,
-                    avg_order_value DECIMAL,
-                    last_order_date TIMESTAMP,
-                    updated_at TIMESTAMP
-                )
-            """)
-            
-            logger.info("Cassandra tables created successfully")
-            
-        except Exception as e:
-            logger.error(f"Error creating Cassandra tables: {e}")
-            
+        statements = [
+            """
+            CREATE TABLE IF NOT EXISTS order_events (
+                event_id UUID PRIMARY KEY,
+                event_type TEXT,
+                order_id TEXT,
+                user_id TEXT,
+                timestamp TIMESTAMP,
+                data TEXT
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS analytics_metrics (
+                metric_key TEXT PRIMARY KEY,
+                payload TEXT,
+                updated_at TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS order_metrics_hourly (
+                date_hour TEXT PRIMARY KEY,
+                order_count BIGINT,
+                total_revenue DECIMAL,
+                avg_order_value DECIMAL,
+                updated_at TIMESTAMP
+            )
+            """,
+        ]
+        for statement in statements:
+            self.cassandra_session.execute(statement)
+
     def close_connections(self):
-        """Close all database connections"""
         if self.redis_client:
             self.redis_client.close()
-            logger.info("Redis connection closed")
-            
+            self.redis_client = None
         if self.cassandra_cluster:
             self.cassandra_cluster.shutdown()
-            logger.info("Cassandra connection closed")
+            self.cassandra_cluster = None
+            self.cassandra_session = None

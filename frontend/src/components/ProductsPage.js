@@ -31,31 +31,15 @@ const ProductsPage = () => {
       
       // Load products from order service
       const productsResponse = await orderService.getProducts();
-      setProducts(productsResponse.data);
+      setProducts(productsResponse.data.content || []);
 
-      // Try to load top products from analytics service
+      // Load real product metrics from the analytics service.
       try {
         const topProductsResponse = await analyticsService.getTopProducts(5);
         setTopProducts(topProductsResponse.data.products);
       } catch (error) {
-        console.log('Analytics service not available, using mock data');
-        // Mock top products data
-        setTopProducts([
-          {
-            product_id: "1",
-            product_name: "Wireless Headphones",
-            total_quantity_sold: 150,
-            total_revenue: 14999.50,
-            order_count: 75
-          },
-          {
-            product_id: "2",
-            product_name: "Phone Case",
-            total_quantity_sold: 200,
-            total_revenue: 3999.00,
-            order_count: 100
-          }
-        ]);
+        console.error('Analytics service is not available:', error);
+        setTopProducts([]);
       }
       
     } catch (error) {
@@ -91,6 +75,11 @@ const ProductsPage = () => {
         Top Performing Products
       </Typography>
       <Grid container spacing={3} sx={{ mb: 4 }}>
+        {topProducts.length === 0 && (
+          <Grid item xs={12}>
+            <Typography color="textSecondary">Product analytics will appear after orders are processed.</Typography>
+          </Grid>
+        )}
         {topProducts.map((product, index) => (
           <Grid item xs={12} sm={6} md={4} key={product.product_id}>
             <Card>

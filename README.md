@@ -1,188 +1,104 @@
-# Real-Time Order Processing and Analytics System
+# OPA Platform — Real-Time Order Processing and Analytics
 
-A comprehensive enterprise-grade system for order management with real-time analytics, built using modern microservices architecture.
+An end-to-end microservices project that processes orders, publishes domain events, persists streaming analytics, and visualizes live operational metrics.
 
-## Architecture Overview
+## What the project demonstrates
 
+- Built a microservices-based order processing system with Spring Boot, PostgreSQL, and Python analytics services.
+- Implemented Kafka-based streaming analytics, persisting metrics in Cassandra and caching real-time data in Redis.
+- Developed a React dashboard for real-time order analytics, revenue trends, and system monitoring.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    UI["React dashboard"] -->|REST| ORD["Spring Boot order service"]
+    ORD --> PG[(PostgreSQL)]
+    ORD -->|cache| REDIS[(Redis)]
+    ORD -->|order events| KAFKA[Apache Kafka]
+    KAFKA --> ANALYTICS["Python / FastAPI analytics service"]
+    ANALYTICS --> CASS[(Cassandra)]
+    ANALYTICS -->|live metrics cache| REDIS
+    ANALYTICS -->|REST + WebSocket| UI
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌────────────────────┐
-│   Frontend      │    │   Order Service │    │  Analytics Service │
-│   (React)       │◄──►│   (Spring Boot) │◄──►│  (Python + Redis)  │
-└─────────────────┘    └─────────────────┘    └────────────────────┘
-                               │                        │
-                               ▼                        ▼
-                      ┌─────────────────┐    ┌─────────────────┐
-                      │   PostgreSQL    │    │     Kafka       │
-                      │   (Orders DB)   │    │  (Event Stream) │
-                      └─────────────────┘    └─────────────────┘
-                                                       │
-                                                       ▼
-                                             ┌─────────────────┐
-                                             │   Cassandra     │
-                                             │ (Analytics DB)  │
-                                             └─────────────────┘
-```
 
-## Tech Stack
+The Spring Boot service owns transactional order data in PostgreSQL. Each created or updated order emits one event to Kafka. The Python service consumes the event stream, calculates idempotent order, revenue, status, and product metrics, stores durable event and metric snapshots in Cassandra, and maintains low-latency dashboard state in Redis.
 
-### Backend
-- **Java 17** + **Spring Boot 3.x** - Core order service
-- **Spring Data JPA** + **Hibernate** - ORM layer
-- **PostgreSQL** - Primary database
-- **Python** - Analytics microservice
-- **Shell Scripts** - Automation and deployment
+## Technology
 
-### Messaging & Analytics
-- **Apache Kafka** - Event streaming
-- **Apache Flink** - Real-time stream processing
-- **Cassandra** - Analytics data storage
+- Java 17, Spring Boot 3.3, Spring Data JPA, Flyway, Spring Kafka
+- PostgreSQL 15, Apache Kafka, Cassandra 4.1, Redis 7
+- Python 3.12, FastAPI, kafka-python, DataStax Cassandra driver
+- React 18, Material UI, Chart.js
+- Docker Compose and GitHub Actions
 
-### Frontend
-- **React** - Admin dashboard
-- **Chart.js** - Analytics visualization
+## Run the complete system
 
-### Testing
-- **JUnit 5** + **Mockito** - Java testing
-- **TestContainers** - Integration testing
-- **PyTest** - Python testing
+Prerequisites: Docker Desktop with Docker Compose v2, `curl`, and `jq`.
 
-## Quick Start
-
-### Prerequisites
-- Java 17+
-- Node.js 18+
-- Docker & Docker Compose
-- Python 3.10+
-- Maven 3.9+
-
-### One-Command Bootstrap
 ```bash
 git clone https://github.com/dbasak763/opaplatform.git
 cd opaplatform
 ./scripts/start-all.sh
 ```
 
-This script will:
-- Bring up PostgreSQL, Redis, Kafka, Cassandra and supporting services
-- Build and launch the Spring Boot order service
-- Create a Python virtual environment and start the analytics FastAPI service
-- Run the React dashboard in development mode
+Endpoints:
 
-Visit the admin dashboard at [http://localhost:3000](http://localhost:3000) once the script completes.
+| Component | URL |
+| --- | --- |
+| React dashboard | http://localhost:3000 |
+| Order API | http://localhost:8090/api |
+| Order health | http://localhost:8090/api/actuator/health |
+| Analytics API | http://localhost:8091 |
+| Analytics health | http://localhost:8091/health |
 
-### Manual Setup
+Development credentials for the order API are `admin` / `admin123`.
 
-If you prefer to run each component independently, follow the sequence below.
+## Prove the end-to-end flow
 
-#### 1. Start Infrastructure
+After the stack is healthy, run:
+
 ```bash
-./scripts/start-infrastructure.sh
+./scripts/test-e2e.sh
 ```
-This provisions:
-- PostgreSQL (`localhost:5432`, credentials `orderuser` / `orderpass`)
-- Redis (`localhost:6379`)
-- Kafka broker (`localhost:9092`)
-- Cassandra (`localhost:9042`)
-- pgAdmin (`http://localhost:8081`, login `admin@orderapp.com` / `admin123`)
 
-#### 2. Start Order Service
+The test creates a real order and verifies:
+
+1. Spring Boot writes the order to PostgreSQL.
+2. The order service publishes a Kafka event.
+3. The Python analytics service consumes the event.
+4. Redis contains the live metric snapshot.
+5. Cassandra contains the event and durable metric snapshot.
+6. The analytics APIs and React dashboard are reachable.
+
+Stop the system with:
+
 ```bash
-./scripts/start-order-service.sh
+./scripts/stop-all.sh
 ```
-The REST API will be available at [http://localhost:8090/api](http://localhost:8090/api).
 
-#### 3. Start Analytics Service
+## Component tests
+
 ```bash
-./scripts/start-analytics-service.sh
-```
-This script will install Python dependencies into `.venv/` (if missing) and launch the FastAPI server at [http://localhost:8091](http://localhost:8091).
-
-#### 4. Start Frontend Dashboard
-```bash
-./scripts/start-frontend.sh
-```
-The React development server runs on [http://localhost:3000](http://localhost:3000).
-
-### Useful Scripts
-- `./scripts/test-api.sh` – Smoke tests against the order-service REST endpoints
-- `./scripts/test-kafka-integration.sh` – End-to-end Kafka + analytics validation
-- `./scripts/stop-all.sh` – Gracefully shut down every component
-
-### Credentials & Default Users
-- Basic Auth for order service: `admin` / `admin123`
-- Postgres: `orderuser` / `orderpass`
-- pgAdmin: `admin@orderapp.com` / `admin123`
-
-Sample data loaded at startup includes users, products, and orders to simplify manual testing.
-
-## Project Structure
-
-```
-order-processing-system/
-├── order-service/          # Spring Boot order management
-├── analytics-service/      # Python analytics microservice
-├── stream-processor/       # Flink streaming jobs
-├── frontend/              # React dashboard
-├── scripts/               # Shell automation scripts
-├── docker/                # Docker configurations
-└── docs/                  # Documentation
-```
-
-## Features
-
-### Order Management
-- Create, read, update orders
-- User management
-- Order status tracking
-- Event-driven architecture
-
-### Real-Time Analytics
-- Live order metrics
-- Product performance tracking
-- Revenue analytics
-- Customer insights
-
-### Admin Dashboard
-- Order history and search
-- Real-time analytics charts
-- System monitoring
-- User management
-
-## Testing & QA
-
-### Automated Test Suites
-```bash
-# Run the full test matrix
 ./scripts/run-tests.sh
-
-# Backend unit & integration tests
-mvn clean verify -f order-service/pom.xml
-
-# Frontend unit tests
-cd frontend && npm test
-
-# Analytics service tests
-cd analytics-service && source .venv/bin/activate && pytest
 ```
 
-### End-to-End Workflows
+CI runs the Spring Boot test suite, Python analytics tests, React production build, and the Docker Compose end-to-end flow on every pull request.
 
-* **API regression:** `./scripts/test-api.sh`
-* **Kafka pipeline:** `./scripts/test-kafka-integration.sh`
-* **Dashboard manual QA:**
-  1. Create a new order from the UI or via `POST /api/orders`
-  2. Confirm order status transitions in the React dashboard
-  3. Validate real-time metrics (orders/minute, revenue trends) update without page refresh
+## Project history
 
-### Monitoring & Troubleshooting
-- Order service health: `GET http://localhost:8090/actuator/health`
-- Analytics service health: `GET http://localhost:8091/health`
-- Check Docker containers: `docker ps`
-- View Kafka topics: `docker exec -it kafka kafka-topics --list --bootstrap-server localhost:9092`
+Most of the original project work was completed in 2025:
 
-## Monitoring
+- **August 2025:** Created the core Spring Boot order-processing platform and PostgreSQL data model.
+- **October 2025:** Added Kafka event streaming, the Python analytics service, Cassandra/Redis analytics storage, and the React monitoring dashboard.
 
-- Application metrics via Micrometer
-- Kafka monitoring via Kafka Manager
-- Database monitoring via pgAdmin
-- Custom dashboards in React frontend
+In **July 2026**, the project was repaired and completed as a reproducible end-to-end system. That maintenance work:
+
+- restored missing Spring Boot application, controller, service, event, and exception-handling code;
+- connected order creation and updates to PostgreSQL and Kafka with database migrations and health checks;
+- replaced incomplete analytics behavior with a real Kafka consumer that calculates idempotent order and revenue metrics, persists events and metric snapshots in Cassandra, and caches live state in Redis;
+- repaired the React dashboard's API integration, revenue trends, live monitoring, and WebSocket lifecycle;
+- completed production container builds and a health-checked Docker Compose topology for every service; and
+- added component tests and a GitHub Actions end-to-end test that creates an order and verifies the complete PostgreSQL → Kafka → Python → Cassandra/Redis → React flow.
+
+The July 2026 commits are maintenance and completion work; the original feature development remains dated to 2025.

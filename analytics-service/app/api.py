@@ -5,8 +5,11 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 import logging
+import os
+import threading
+import time
 from .models import OrderMetrics, ProductMetrics, UserMetrics, RealtimeStats
-from .kafka_consumer import AnalyticsProcessor
+from .kafka_consumer import AnalyticsProcessor, OrderEventConsumer
 from .database import DatabaseConnections
 
 logger = logging.getLogger(__name__)
@@ -25,30 +28,58 @@ app.add_middleware(
 # Global instances
 db_connections = DatabaseConnections()
 analytics_processor = AnalyticsProcessor()
+event_consumer = OrderEventConsumer()
+consumer_thread = None
 websocket_connections: List[WebSocket] = []
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database connections on startup"""
-    db_connections.connect_redis()
-    db_connections.connect_cassandra()
+    """Connect durable stores and start the Kafka analytics worker."""
+    global consumer_thread
+    attempts = int(os.getenv("DEPENDENCY_RETRY_ATTEMPTS", "30"))
+    delay = float(os.getenv("DEPENDENCY_RETRY_DELAY_SECONDS", "3"))
+    for attempt in range(1, attempts + 1):
+        redis_client = db_connections.redis_client or db_connections.connect_redis()
+        cassandra_session = db_connections.cassandra_session or db_connections.connect_cassandra()
+        if redis_client and cassandra_session:
+            break
+        if attempt == attempts:
+            raise RuntimeError("Analytics dependencies were not ready before startup timeout")
+        logger.info("Waiting for analytics dependencies (%s/%s)", attempt, attempts)
+        time.sleep(delay)
+
     analytics_processor.redis_client = db_connections.redis_client
     analytics_processor.cassandra_session = db_connections.cassandra_session
+    analytics_processor.initialize_metrics_from_store()
+    event_consumer.register_handler("ORDER_CREATED", analytics_processor.process_order_created)
+    event_consumer.register_handler("ORDER_STATUS_CHANGED", analytics_processor.process_order_status_changed)
+    event_consumer.register_handler("ORDER_CANCELLED", analytics_processor.process_order_cancelled)
+    consumer_thread = threading.Thread(
+        target=event_consumer.start_consumer,
+        args=([os.getenv("ORDER_EVENTS_TOPIC", "order-events")],),
+        daemon=True,
+        name="analytics-kafka-consumer",
+    )
+    consumer_thread.start()
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up connections on shutdown"""
+    event_consumer.stop_consumer()
+    if consumer_thread:
+        consumer_thread.join(timeout=5)
     db_connections.close_connections()
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     return {
-        "status": "healthy",
+        "status": "healthy" if event_consumer.ready else "starting",
         "timestamp": datetime.now().isoformat(),
         "services": {
             "redis": db_connections.redis_client is not None,
-            "cassandra": db_connections.cassandra_session is not None
+            "cassandra": db_connections.cassandra_session is not None,
+            "kafka": event_consumer.ready,
         }
     }
 
@@ -103,28 +134,12 @@ async def get_realtime_stats():
                 except json.JSONDecodeError:
                     continue
 
-        # Mock top products (in real implementation, query from Cassandra)
-        top_products = [
-            ProductMetrics(
-                product_id="1",
-                product_name="Wireless Headphones",
-                total_quantity_sold=150,
-                total_revenue=14999.50,
-                order_count=75
-            ),
-            ProductMetrics(
-                product_id="2", 
-                product_name="Phone Case",
-                total_quantity_sold=200,
-                total_revenue=3999.00,
-                order_count=100
-            )
-        ]
+        top_products = [ProductMetrics(**item) for item in analytics_processor.get_top_products(5)]
         
         return RealtimeStats(
             current_orders_per_minute=current_orders_per_minute,
             revenue_per_minute=revenue_per_minute,
-            active_users=25,  # Mock data
+            active_users=len(metrics.get("active_user_ids", [])),
             top_products=top_products,
             recent_orders=recent_orders
         )
@@ -183,6 +198,8 @@ async def get_trends(interval: str = "hour", window: int = 24):
             "data": trend_data
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting trends: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve trend data")
@@ -191,32 +208,7 @@ async def get_trends(interval: str = "hour", window: int = 24):
 async def get_top_products(limit: int = 10):
     """Get top performing products"""
     try:
-        # In real implementation, query from Cassandra
-        top_products = [
-            {
-                "product_id": "1",
-                "product_name": "Wireless Headphones",
-                "total_quantity_sold": 150,
-                "total_revenue": 14999.50,
-                "order_count": 75
-            },
-            {
-                "product_id": "2",
-                "product_name": "Phone Case", 
-                "total_quantity_sold": 200,
-                "total_revenue": 3999.00,
-                "order_count": 100
-            },
-            {
-                "product_id": "3",
-                "product_name": "Laptop Stand",
-                "total_quantity_sold": 80,
-                "total_revenue": 7999.20,
-                "order_count": 40
-            }
-        ]
-        
-        return {"products": top_products[:limit]}
+        return {"products": analytics_processor.get_top_products(max(1, min(limit, 100)))}
         
     except Exception as e:
         logger.error(f"Error getting top products: {e}")

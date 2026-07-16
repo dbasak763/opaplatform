@@ -1,10 +1,15 @@
+import copy
 import json
 import logging
-from kafka import KafkaConsumer
-from typing import Dict, Any, Callable
-from datetime import datetime, timezone
-import copy
+import os
+import time
+import uuid
 from collections import deque
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Any, Callable, Dict
+
+from kafka import KafkaConsumer
 
 logger = logging.getLogger(__name__)
 
@@ -13,60 +18,65 @@ MAX_MINUTE_BUCKETS = 120
 MAX_HOUR_BUCKETS = 48
 MAX_RECENT_EVENTS = 5000
 
+
 class OrderEventConsumer:
-    def __init__(self, bootstrap_servers: str = "localhost:9092"):
-        self.bootstrap_servers = bootstrap_servers
+    def __init__(self, bootstrap_servers: str | None = None):
+        self.bootstrap_servers = bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+        self.group_id = os.getenv("KAFKA_CONSUMER_GROUP", "analytics-service")
         self.consumer = None
         self.running = False
+        self.ready = False
         self.event_handlers: Dict[str, Callable] = {}
-        
+
     def register_handler(self, event_type: str, handler: Callable):
-        """Register a handler for a specific event type"""
         self.event_handlers[event_type] = handler
-        
+
     def start_consumer(self, topics: list[str]):
-        """Start consuming messages from Kafka topics"""
-        try:
-            self.consumer = KafkaConsumer(
-                *topics,
-                bootstrap_servers=self.bootstrap_servers,
-                value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-                group_id='analytics-service',
-                auto_offset_reset='latest',
-                enable_auto_commit=True
-            )
-            
-            self.running = True
-            logger.info(f"Started consuming from topics: {topics}")
-            
-            for message in self.consumer:
-                if not self.running:
-                    break
-                    
-                try:
-                    event_data = message.value
-                    event_type = event_data.get('eventType', 'unknown')
-                    
-                    logger.info(f"Received event: {event_type} for order: {event_data.get('orderId')}")
-                    
-                    # Process event with registered handler
-                    if event_type in self.event_handlers:
-                        self.event_handlers[event_type](event_data)
-                    else:
-                        logger.warning(f"No handler registered for event type: {event_type}")
-                        
-                except Exception as e:
-                    logger.error(f"Error processing message: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Error starting Kafka consumer: {e}")
-            
+        self.running = True
+        while self.running:
+            try:
+                self.consumer = KafkaConsumer(
+                    *topics,
+                    bootstrap_servers=self.bootstrap_servers,
+                    value_deserializer=lambda value: json.loads(value.decode("utf-8")),
+                    group_id=self.group_id,
+                    auto_offset_reset="earliest",
+                    enable_auto_commit=False,
+                )
+                self.ready = True
+                logger.info("Consuming %s from %s", topics, self.bootstrap_servers)
+                for message in self.consumer:
+                    if not self.running:
+                        break
+                    event = message.value
+                    event_type = event.get("eventType", "UNKNOWN")
+                    handler = self.event_handlers.get(event_type)
+                    if not handler:
+                        logger.warning("Ignoring unsupported event type %s", event_type)
+                        self.consumer.commit()
+                        continue
+                    try:
+                        handler(event)
+                        self.consumer.commit()
+                    except Exception:
+                        logger.exception("Failed to process event %s; offset was not committed", event.get("eventId"))
+                        time.sleep(1)
+            except Exception:
+                self.ready = False
+                if self.running:
+                    logger.exception("Kafka consumer disconnected; retrying in 5 seconds")
+                    time.sleep(5)
+            finally:
+                if self.consumer:
+                    self.consumer.close()
+                    self.consumer = None
+        self.ready = False
+
     def stop_consumer(self):
-        """Stop the Kafka consumer"""
         self.running = False
         if self.consumer:
             self.consumer.close()
-            logger.info("Kafka consumer stopped")
+
 
 class AnalyticsProcessor:
     def __init__(self, cassandra_session=None, redis_client=None):
@@ -75,263 +85,217 @@ class AnalyticsProcessor:
         self.processed_event_cache = deque()
         self.processed_event_lookup = set()
         self.metrics_cache = self._default_metrics()
-        self.initialize_metrics_from_store()
 
-    def process_order_created(self, event_data: Dict[str, Any]):
-        """Process order created events"""
-        try:
-            if not self._should_process_event(event_data):
-                return
+    def process_order_created(self, event: Dict[str, Any]):
+        if not self._should_process_event(event):
+            return
+        amount = float(event.get("totalAmount", 0) or 0)
+        timestamp = self._parse_timestamp(event.get("timestamp"))
+        status = event.get("status") or "PENDING"
+        self._update_order_metrics(amount, timestamp)
+        self._increment_status(status)
+        self._update_product_metrics(event.get("items") or [])
+        user_id = str(event.get("userId") or "")
+        if user_id and user_id not in self.metrics_cache["active_user_ids"]:
+            self.metrics_cache["active_user_ids"].append(user_id)
+        self._store_order_event(event)
+        self._update_realtime_cache(event)
+        self._persist_metrics()
+        self._mark_processed(event)
 
-            order_id = event_data.get('orderId')
-            total_amount = float(event_data.get('totalAmount', 0) or 0)
-            timestamp = self._parse_timestamp(event_data.get('timestamp'))
-            status = event_data.get('status') or event_data.get('orderStatus') or 'PENDING'
+    def process_order_status_changed(self, event: Dict[str, Any]):
+        if not self._should_process_event(event):
+            return
+        self._update_status_metrics(event.get("previousStatus"), event.get("newStatus"))
+        self._store_order_event(event)
+        self._update_realtime_cache(event)
+        self._persist_metrics()
+        self._mark_processed(event)
 
-            self._update_order_metrics(total_amount, timestamp)
-            self._increment_status(status)
-
-            if self.cassandra_session:
-                self._store_order_event(event_data)
-
-            if self.redis_client:
-                self._update_realtime_cache(event_data)
-
-            self._persist_metrics()
-            logger.info(f"Processed order created event for order: {order_id}")
-
-        except Exception as e:
-            logger.error(f"Error processing order created event: {e}")
-
-    def process_order_status_changed(self, event_data: Dict[str, Any]):
-        """Process order status change events"""
-        try:
-            if not self._should_process_event(event_data):
-                return
-
-            old_status = event_data.get('oldStatus') or event_data.get('previousStatus')
-            new_status = event_data.get('newStatus') or event_data.get('status')
-
-            self._update_status_metrics(old_status, new_status)
-
-            if self.cassandra_session:
-                self._store_status_change(event_data)
-
-            self._persist_metrics()
-            logger.info(
-                "Processed status change for order %s: %s -> %s",
-                event_data.get('orderId'),
-                old_status,
-                new_status
-            )
-
-        except Exception as e:
-            logger.error(f"Error processing order status change: {e}")
-
-    def process_order_cancelled(self, event_data: Dict[str, Any]):
-        """Process order cancellation events"""
-        try:
-            if not self._should_process_event(event_data):
-                return
-
-            previous_status = event_data.get('previousStatus') or event_data.get('oldStatus')
-            self._update_status_metrics(previous_status, 'CANCELLED')
-            self._increment_cancellations()
-
-            if self.cassandra_session:
-                self._store_status_change(event_data)
-
-            self._persist_metrics()
-            logger.info(
-                "Processed order cancellation for order: %s",
-                event_data.get('orderId')
-            )
-
-        except Exception as e:
-            logger.error(f"Error processing order cancellation: {e}")
-
-    # -------------------- Metrics Helpers --------------------
+    def process_order_cancelled(self, event: Dict[str, Any]):
+        if not self._should_process_event(event):
+            return
+        self._update_status_metrics(event.get("previousStatus"), "CANCELLED")
+        self.metrics_cache["cancelled_orders"] += 1
+        refund = float(event.get("refundAmount", 0) or 0)
+        self.metrics_cache["total_revenue"] = max(0.0, self.metrics_cache["total_revenue"] - refund)
+        self._recalculate_average()
+        self._store_order_event(event)
+        self._update_realtime_cache(event)
+        self._persist_metrics()
+        self._mark_processed(event)
 
     def _default_metrics(self) -> Dict[str, Any]:
         return {
-            'total_orders': 0,
-            'total_revenue': 0.0,
-            'avg_order_value': 0.0,
-            'cancelled_orders': 0,
-            'orders_by_status': {},
-            'orders_per_hour': {},
-            'orders_per_minute': {},
-            'revenue_per_hour': {},
-            'revenue_per_minute': {}
+            "total_orders": 0,
+            "total_revenue": 0.0,
+            "avg_order_value": 0.0,
+            "cancelled_orders": 0,
+            "orders_by_status": {},
+            "orders_per_hour": {},
+            "orders_per_minute": {},
+            "revenue_per_hour": {},
+            "revenue_per_minute": {},
+            "product_metrics": {},
+            "active_user_ids": [],
         }
 
     def _parse_timestamp(self, raw_value) -> datetime:
         if isinstance(raw_value, list):
-            # Handle [year, month, day, hour, minute, second, nanos]
             year, month, day, hour, minute, second, nanos = (raw_value + [0] * 7)[:7]
-            microseconds = int((nanos or 0) / 1000)
-            return datetime(year, month, day, hour, minute, second, microseconds, tzinfo=timezone.utc)
-
+            return datetime(year, month, day, hour, minute, second, int((nanos or 0) / 1000), tzinfo=timezone.utc)
         if isinstance(raw_value, (int, float)):
             return datetime.fromtimestamp(raw_value, tz=timezone.utc)
-
         if isinstance(raw_value, str) and raw_value:
-            value = raw_value.strip()
-            if value.endswith('Z'):
-                value = value[:-1] + '+00:00'
+            value = raw_value.strip().replace("Z", "+00:00")
             try:
-                return datetime.fromisoformat(value)
+                parsed = datetime.fromisoformat(value)
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
             except ValueError:
-                logger.warning("Unable to parse timestamp '%s', defaulting to now", raw_value)
+                logger.warning("Invalid event timestamp %s", raw_value)
+        return datetime.now(timezone.utc)
 
-        return datetime.utcnow().replace(tzinfo=timezone.utc)
+    def _event_id(self, event: Dict[str, Any]) -> str:
+        return str(event.get("eventId") or event.get("id") or "")
 
-    def _should_process_event(self, event_data: Dict[str, Any]) -> bool:
-        event_id = event_data.get('eventId') or event_data.get('id')
+    def _should_process_event(self, event: Dict[str, Any]) -> bool:
+        event_id = self._event_id(event)
         if not event_id:
             return True
+        if self.redis_client and self.redis_client.exists(f"analytics:event:{event_id}"):
+            return False
+        return event_id not in self.processed_event_lookup
 
-        event_id = str(event_id)
-
+    def _mark_processed(self, event: Dict[str, Any]):
+        event_id = self._event_id(event)
+        if not event_id:
+            return
         if self.redis_client:
-            key = f"analytics:event:{event_id}"
-            created = self.redis_client.set(key, 1, ex=PROCESSED_EVENT_TTL_SECONDS, nx=True)
-            if created:
-                return True
-            return False
-
-        if event_id in self.processed_event_lookup:
-            return False
-
+            self.redis_client.set(f"analytics:event:{event_id}", 1, ex=PROCESSED_EVENT_TTL_SECONDS)
         self.processed_event_cache.append(event_id)
         self.processed_event_lookup.add(event_id)
         if len(self.processed_event_cache) > MAX_RECENT_EVENTS:
-            oldest = self.processed_event_cache.popleft()
-            self.processed_event_lookup.discard(oldest)
-        
-        return True
+            self.processed_event_lookup.discard(self.processed_event_cache.popleft())
 
     def _update_order_metrics(self, amount: float, timestamp: datetime):
-        minute_key = timestamp.strftime('%Y-%m-%d-%H-%M')
-        hour_key = timestamp.strftime('%Y-%m-%d-%H')
+        minute_key = timestamp.strftime("%Y-%m-%d-%H-%M")
+        hour_key = timestamp.strftime("%Y-%m-%d-%H")
+        self._increment_bucket("orders_per_minute", minute_key, 1, MAX_MINUTE_BUCKETS)
+        self._increment_bucket("revenue_per_minute", minute_key, amount, MAX_MINUTE_BUCKETS)
+        self._increment_bucket("orders_per_hour", hour_key, 1, MAX_HOUR_BUCKETS)
+        self._increment_bucket("revenue_per_hour", hour_key, amount, MAX_HOUR_BUCKETS)
+        self.metrics_cache["total_orders"] += 1
+        self.metrics_cache["total_revenue"] += amount
+        self._recalculate_average()
 
-        self._increment_bucket('orders_per_minute', minute_key, 1, MAX_MINUTE_BUCKETS)
-        self._increment_bucket('revenue_per_minute', minute_key, amount, MAX_MINUTE_BUCKETS)
-        self._increment_bucket('orders_per_hour', hour_key, 1, MAX_HOUR_BUCKETS)
-        self._increment_bucket('revenue_per_hour', hour_key, amount, MAX_HOUR_BUCKETS)
-
-        self.metrics_cache['total_orders'] += 1
-        self.metrics_cache['total_revenue'] += amount
-
-        if self.metrics_cache['total_orders'] > 0:
-            self.metrics_cache['avg_order_value'] = (
-                self.metrics_cache['total_revenue'] / self.metrics_cache['total_orders']
-            )
+    def _recalculate_average(self):
+        total = self.metrics_cache["total_orders"]
+        self.metrics_cache["avg_order_value"] = self.metrics_cache["total_revenue"] / total if total else 0.0
 
     def _increment_bucket(self, cache_key: str, bucket_key: str, value: float, limit: int):
-        bucket = self.metrics_cache.setdefault(cache_key, {})
+        bucket = self.metrics_cache[cache_key]
         bucket[bucket_key] = float(bucket.get(bucket_key, 0)) + value
+        while len(bucket) > limit:
+            bucket.pop(min(bucket), None)
 
-        if len(bucket) > limit:
-            oldest_key = min(bucket.keys())
-            bucket.pop(oldest_key, None)
+    def _increment_status(self, status: str | None, delta: int = 1):
+        if status:
+            statuses = self.metrics_cache["orders_by_status"]
+            statuses[status] = max(0, int(statuses.get(status, 0)) + delta)
 
-    def _increment_status(self, status: str, delta: int = 1):
-        if not status:
-            return
-        status_map = self.metrics_cache.setdefault('orders_by_status', {})
-        status_map[status] = max(0, status_map.get(status, 0) + delta)
-
-    def _update_status_metrics(self, old_status: str, new_status: str):
+    def _update_status_metrics(self, old_status: str | None, new_status: str | None):
         if old_status and old_status != new_status:
             self._increment_status(old_status, -1)
         if new_status:
             self._increment_status(new_status, 1)
 
-    def _increment_cancellations(self):
-        self.metrics_cache['cancelled_orders'] = self.metrics_cache.get('cancelled_orders', 0) + 1
-
-    # -------------------- Persistence Helpers --------------------
+    def _update_product_metrics(self, items: list[Dict[str, Any]]):
+        products = self.metrics_cache["product_metrics"]
+        for item in items:
+            product_id = str(item.get("productId") or item.get("productName") or "unknown")
+            metric = products.setdefault(
+                product_id,
+                {
+                    "product_id": product_id,
+                    "product_name": item.get("productName") or "Unknown product",
+                    "total_quantity_sold": 0,
+                    "total_revenue": 0.0,
+                    "order_count": 0,
+                },
+            )
+            metric["total_quantity_sold"] += int(item.get("quantity", 0) or 0)
+            metric["total_revenue"] += float(item.get("totalPrice", 0) or 0)
+            metric["order_count"] += 1
 
     def get_current_metrics(self) -> Dict[str, Any]:
-        """Get current metrics from cache"""
         return copy.deepcopy(self.metrics_cache)
 
+    def get_top_products(self, limit: int = 10) -> list[Dict[str, Any]]:
+        values = list(self.metrics_cache["product_metrics"].values())
+        return sorted(values, key=lambda item: (item["total_revenue"], item["total_quantity_sold"]), reverse=True)[:limit]
+
     def initialize_metrics_from_store(self):
-        """Load persisted metrics from Redis if available."""
-        if not self.redis_client:
-            return
-
-        try:
-            data = self.redis_client.hgetall("analytics:metrics")
-            if not data:
-                return
-
-            metrics = self._default_metrics()
-            metrics['total_orders'] = int(float(data.get('total_orders', 0) or 0))
-            metrics['total_revenue'] = float(data.get('total_revenue', 0.0) or 0.0)
-            metrics['cancelled_orders'] = int(float(data.get('cancelled_orders', 0) or 0))
-            metrics['avg_order_value'] = float(data.get('avg_order_value', 0.0) or 0.0)
-
-            metrics['orders_by_status'] = json.loads(data.get('orders_by_status', '{}') or '{}')
-            metrics['orders_per_hour'] = json.loads(data.get('orders_per_hour', '{}') or '{}')
-            metrics['orders_per_minute'] = json.loads(data.get('orders_per_minute', '{}') or '{}')
-            metrics['revenue_per_hour'] = json.loads(data.get('revenue_per_hour', '{}') or '{}')
-            metrics['revenue_per_minute'] = json.loads(data.get('revenue_per_minute', '{}') or '{}')
-
-            self.metrics_cache = metrics
-
-        except Exception as exc:
-            logger.error(f"Error loading metrics from Redis: {exc}")
+        payload = None
+        if self.redis_client:
+            payload = self.redis_client.get("analytics:metrics:snapshot")
+        if not payload and self.cassandra_session:
+            row = self.cassandra_session.execute(
+                "SELECT payload FROM analytics_metrics WHERE metric_key = %s", ("current",)
+            ).one()
+            payload = row.payload if row else None
+        if payload:
+            stored = json.loads(payload)
+            defaults = self._default_metrics()
+            defaults.update(stored)
+            self.metrics_cache = defaults
 
     def _persist_metrics(self):
-        """Persist current metrics to Redis for durability."""
-        if not self.redis_client:
-            return
-
-        try:
-            self.redis_client.hset(
-                "analytics:metrics",
-                mapping={
-                    "total_orders": self.metrics_cache.get('total_orders', 0),
-                    "total_revenue": self.metrics_cache.get('total_revenue', 0.0),
-                    "avg_order_value": self.metrics_cache.get('avg_order_value', 0.0),
-                    "cancelled_orders": self.metrics_cache.get('cancelled_orders', 0),
-                    "orders_by_status": json.dumps(self.metrics_cache.get('orders_by_status', {})),
-                    "orders_per_hour": json.dumps(self.metrics_cache.get('orders_per_hour', {})),
-                    "orders_per_minute": json.dumps(self.metrics_cache.get('orders_per_minute', {})),
-                    "revenue_per_hour": json.dumps(self.metrics_cache.get('revenue_per_hour', {})),
-                    "revenue_per_minute": json.dumps(self.metrics_cache.get('revenue_per_minute', {}))
-                }
+        payload = json.dumps(self.metrics_cache)
+        now = datetime.now(timezone.utc)
+        if self.redis_client:
+            self.redis_client.set("analytics:metrics:snapshot", payload)
+        if not self.cassandra_session:
+            raise RuntimeError("Cassandra is required for durable analytics metrics")
+        self.cassandra_session.execute(
+            "INSERT INTO analytics_metrics (metric_key, payload, updated_at) VALUES (%s, %s, %s)",
+            ("current", payload, now),
+        )
+        for hour, order_count in self.metrics_cache["orders_per_hour"].items():
+            revenue = float(self.metrics_cache["revenue_per_hour"].get(hour, 0.0))
+            average = revenue / order_count if order_count else 0.0
+            self.cassandra_session.execute(
+                """
+                INSERT INTO order_metrics_hourly
+                (date_hour, order_count, total_revenue, avg_order_value, updated_at)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (hour, int(order_count), Decimal(str(revenue)), Decimal(str(average)), now),
             )
-        except Exception as exc:
-            logger.error(f"Error persisting metrics to Redis: {exc}")
 
-    # -------------------- Storage Hooks --------------------
+    def _store_order_event(self, event: Dict[str, Any]):
+        if not self.cassandra_session:
+            raise RuntimeError("Cassandra is required for event persistence")
+        raw_event_id = self._event_id(event)
+        event_id = uuid.UUID(raw_event_id) if raw_event_id else uuid.uuid4()
+        self.cassandra_session.execute(
+            """
+            INSERT INTO order_events (event_id, event_type, order_id, user_id, timestamp, data)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                event_id,
+                event.get("eventType", "UNKNOWN"),
+                str(event.get("orderId") or ""),
+                str(event.get("userId") or ""),
+                self._parse_timestamp(event.get("timestamp")),
+                json.dumps(event),
+            ),
+        )
 
-    def _store_order_event(self, event_data: Dict[str, Any]):
-        """Store order event in Cassandra (placeholder)."""
-        pass
-
-    def _store_status_change(self, event_data: Dict[str, Any]):
-        """Store order status change in Cassandra (placeholder)."""
-        pass
-
-    def _update_realtime_cache(self, event_data: Dict[str, Any]):
-        """Update Redis cache for real-time metrics"""
+    def _update_realtime_cache(self, event: Dict[str, Any]):
         if not self.redis_client:
             return
-
-        try:
-            event_copy = copy.deepcopy(event_data)
-            event_copy['timestamp'] = self._parse_timestamp(event_copy.get('timestamp')).isoformat()
-
-            recent_orders_key = "recent_orders"
-            self.redis_client.lpush(recent_orders_key, json.dumps(event_copy))
-            self.redis_client.ltrim(recent_orders_key, 0, 99)  # Keep last 100 orders
-
-            self.redis_client.incr("total_orders_today")
-            self.redis_client.incrbyfloat("revenue_today", event_data.get('totalAmount', 0))
-
-        except Exception as e:
-            logger.error(f"Error updating Redis cache: {e}")
+        event_copy = copy.deepcopy(event)
+        event_copy["timestamp"] = self._parse_timestamp(event_copy.get("timestamp")).isoformat()
+        self.redis_client.lpush("recent_orders", json.dumps(event_copy))
+        self.redis_client.ltrim("recent_orders", 0, 99)

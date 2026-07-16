@@ -4,7 +4,7 @@ import com.orderapp.dto.CreateOrderRequest;
 import com.orderapp.dto.OrderResponse;
 import com.orderapp.entity.Order;
 import com.orderapp.service.OrderService;
-import javax.validation.Valid;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;

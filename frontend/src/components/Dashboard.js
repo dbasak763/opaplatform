@@ -36,17 +36,17 @@ const Dashboard = () => {
   const [revenueInterval, setRevenueInterval] = useState('hour');
   const [ordersInterval, setOrdersInterval] = useState('hour');
   const [loading, setLoading] = useState(true);
-  const [wsConnection, setWsConnection] = useState(null);
-
   useEffect(() => {
     loadInitialData();
-    setupRealtimeConnection();
+    const connection = new RealtimeConnection(
+      (data) => setRealtimeStats(data),
+      (error) => console.error('WebSocket error:', error)
+    );
+    connection.connect();
 
-    return () => {
-      if (wsConnection) {
-        wsConnection.disconnect();
-      }
-    };
+    return () => connection.disconnect();
+    // Initial load and one WebSocket connection per dashboard mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadInitialData = async () => {
@@ -86,8 +86,8 @@ const Dashboard = () => {
           
           const fallbackMetrics = {
             total_orders: ordersRes.data.totalElements || 0,
-            total_revenue: revenueRes.data.totalRevenue || 0,
-            avg_order_value: revenueRes.data.totalRevenue / (ordersRes.data.totalElements || 1),
+            total_revenue: Number(revenueRes.data) || 0,
+            avg_order_value: (Number(revenueRes.data) || 0) / (ordersRes.data.totalElements || 1),
             orders_by_status: {}
           };
           
@@ -104,28 +104,12 @@ const Dashboard = () => {
     }
   };
 
-  const setupRealtimeConnection = () => {
-    const connection = new RealtimeConnection(
-      (data) => {
-        setRealtimeStats(data);
-      },
-      (error) => {
-        console.error('WebSocket error:', error);
-      }
-    );
-    
-    connection.connect();
-    setWsConnection(connection);
-  };
-
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD'
     }).format(amount);
   };
-
-  const currentMetrics = metrics || {};
 
   const filteredRevenueBuckets = (revenueTrend?.data || []).filter(item => item && item.revenue !== undefined);
   const filteredOrderBuckets = (ordersTrend?.data || []).filter(item => item && item.orders !== undefined);
@@ -334,10 +318,10 @@ const Dashboard = () => {
               {realtimeStats?.recent_orders?.slice(0, 5).map((order, index) => (
                 <Box key={index} sx={{ p: 1, borderBottom: '1px solid #eee' }}>
                   <Typography variant="body2">
-                    Order #{order.orderId}
+                    {order.orderNumber || `Order #${order.orderId}`}
                   </Typography>
                   <Typography variant="caption" color="textSecondary">
-                    {formatCurrency(order.totalAmount)} - {order.eventType}
+                    {formatCurrency(order.totalAmount ?? order.refundAmount ?? 0)} - {order.eventType}
                   </Typography>
                 </Box>
               )) || (

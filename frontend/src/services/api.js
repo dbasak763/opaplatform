@@ -1,8 +1,9 @@
 import axios from 'axios';
 
 // API base URLs
-const ORDER_SERVICE_URL = 'http://localhost:8090/api';
-const ANALYTICS_SERVICE_URL = 'http://localhost:8091';
+const ORDER_SERVICE_URL = process.env.REACT_APP_ORDER_SERVICE_URL || 'http://localhost:8090/api';
+const ANALYTICS_SERVICE_URL = process.env.REACT_APP_ANALYTICS_SERVICE_URL || 'http://localhost:8091';
+const ANALYTICS_WS_URL = process.env.REACT_APP_ANALYTICS_WS_URL || 'ws://localhost:8091/ws/realtime';
 
 // Create axios instances
 const orderApi = axios.create({
@@ -86,11 +87,14 @@ export class RealtimeConnection {
     this.onError = onError;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
+    this.shouldReconnect = false;
+    this.reconnectTimer = null;
   }
 
   connect() {
+    this.shouldReconnect = true;
     try {
-      this.ws = new WebSocket('ws://localhost:8091/ws/realtime');
+      this.ws = new WebSocket(ANALYTICS_WS_URL);
       
       this.ws.onopen = () => {
         console.log('WebSocket connected');
@@ -108,7 +112,9 @@ export class RealtimeConnection {
       
       this.ws.onclose = () => {
         console.log('WebSocket disconnected');
-        this.attemptReconnect();
+        if (this.shouldReconnect) {
+          this.attemptReconnect();
+        }
       };
       
       this.ws.onerror = (error) => {
@@ -127,16 +133,23 @@ export class RealtimeConnection {
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
       console.log(`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-      setTimeout(() => this.connect(), 5000);
+      this.reconnectTimer = setTimeout(() => this.connect(), 5000);
     }
   }
 
   disconnect() {
+    this.shouldReconnect = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
+      this.ws.onclose = null;
       this.ws.close();
       this.ws = null;
     }
   }
 }
 
-export default { orderService, analyticsService, RealtimeConnection };
+const services = { orderService, analyticsService, RealtimeConnection };
+export default services;

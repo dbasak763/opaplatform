@@ -1,21 +1,15 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements first for better caching
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && addgroup --system app \
+    && adduser --system --ingroup app app
 
-# Copy application code
-COPY . .
-
-# Expose port
+COPY --chown=app:app . .
+USER app
 EXPOSE 8091
-
-# Run the application
 CMD ["python", "main.py"]

@@ -45,7 +45,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@11.9.0 --activate
           pnpm install --frozen-lockfile --config.node-linker=hoisted
-          CI=true pnpm run build
+          CI=true node node_modules/react-scripts/bin/react-scripts.js build
 
   end-to-end:
     runs-on: ubuntu-latest

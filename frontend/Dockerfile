@@ -10,7 +10,7 @@ ARG REACT_APP_ANALYTICS_WS_URL=ws://localhost:8091/ws/realtime
 ENV REACT_APP_ORDER_SERVICE_URL=$REACT_APP_ORDER_SERVICE_URL \
     REACT_APP_ANALYTICS_SERVICE_URL=$REACT_APP_ANALYTICS_SERVICE_URL \
     REACT_APP_ANALYTICS_WS_URL=$REACT_APP_ANALYTICS_WS_URL
-RUN pnpm run build
+RUN CI=true node node_modules/react-scripts/bin/react-scripts.js build
 
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf

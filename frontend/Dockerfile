@@ -13,6 +13,7 @@ ENV REACT_APP_ORDER_SERVICE_URL=$REACT_APP_ORDER_SERVICE_URL \
 RUN CI=true node node_modules/react-scripts/bin/react-scripts.js build
 
 FROM nginx:1.27-alpine
+RUN apk add --no-cache curl
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/build /usr/share/nginx/html
 EXPOSE 80

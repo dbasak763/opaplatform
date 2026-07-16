@@ -1,7 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile --config.node-linker=hoisted
 COPY . .
 ARG REACT_APP_ORDER_SERVICE_URL=http://localhost:8090/api

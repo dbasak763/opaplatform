@@ -87,4 +87,18 @@ CI runs the Spring Boot test suite, Python analytics tests, React production bui
 
 ## Project history
 
-The core order platform was created in August 2025. Analytics persistence and dashboard trend work were enhanced in October 2025. Later maintenance restored missing source files and made startup, persistence, tests, and end-to-end verification reproducible; the original project dates remain documented separately from maintenance commit dates.
+Most of the original project work was completed in 2025:
+
+- **August 2025:** Created the core Spring Boot order-processing platform and PostgreSQL data model.
+- **October 2025:** Added Kafka event streaming, the Python analytics service, Cassandra/Redis analytics storage, and the React monitoring dashboard.
+
+In **July 2026**, the project was repaired and completed as a reproducible end-to-end system. That maintenance work:
+
+- restored missing Spring Boot application, controller, service, event, and exception-handling code;
+- connected order creation and updates to PostgreSQL and Kafka with database migrations and health checks;
+- replaced incomplete analytics behavior with a real Kafka consumer that calculates idempotent order and revenue metrics, persists events and metric snapshots in Cassandra, and caches live state in Redis;
+- repaired the React dashboard's API integration, revenue trends, live monitoring, and WebSocket lifecycle;
+- completed production container builds and a health-checked Docker Compose topology for every service; and
+- added component tests and a GitHub Actions end-to-end test that creates an order and verifies the complete PostgreSQL → Kafka → Python → Cassandra/Redis → React flow.
+
+The July 2026 commits are maintenance and completion work; the original feature development remains dated to 2025.

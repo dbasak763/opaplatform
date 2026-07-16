@@ -38,7 +38,7 @@ jobs:
       - if: matrix.component == 'frontend'
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - if: matrix.component == 'frontend'
         run: |
           cd frontend
